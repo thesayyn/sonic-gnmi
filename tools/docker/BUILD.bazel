@@ -1,12 +1,18 @@
 package(default_visibility = ["//visibility:public"])
 
-exports_files(glob([
-    "*yang*",
-    "*.sh",
-    "*.conf",
-    "*.json",
-    "*.host",
-]) + [
-    "supervisor-proc-exit-listener",
-    "supervisord_dependent_startup",
-])
+exports_files(
+    glob(
+        [
+            "*yang*",
+            "*.sh",
+            "*.conf",
+            "*.json",
+            "*.host",
+        ],
+        # TODO(bazel-ready): Clean up to remove missing blobs if that's the intention.
+        allow_empty = True,
+    ) + [
+        "supervisor-proc-exit-listener",
+        "supervisord_dependent_startup",
+    ],
+)

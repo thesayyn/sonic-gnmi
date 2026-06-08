@@ -1,5 +1,7 @@
-load("@bazel_gazelle//:def.bzl", "gazelle")
-load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier")
+load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+load("@gazelle//:def.bzl", "gazelle")
+load("@rules_distroless//distroless:defs.bzl", "flatten")
+load("@tar.bzl", "tar")
 
 # gazelle:prefix github.com/sonic-net/sonic-gnmi
 # gazelle:exclude patches
@@ -14,8 +16,18 @@ load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier")
 # gazelle:resolve go github.com/Azure/sonic-mgmt-common/translib/tlerr @sonic-mgmt-common//translib/tlerr
 # gazelle:resolve go github.com/Azure/sonic-mgmt-common/translib/transformer @sonic-mgmt-common//translib/transformer
 
-### Help Gazelle resolve external proto files
+### Help Gazelle resolve openconfig/gnmi Go imports to our patched repo, not the BCR module
+### we need for gnsi.
+#
+# gazelle:resolve go github.com/openconfig/gnmi/client @com_github_openconfig_gnmi//client
+# gazelle:resolve go github.com/openconfig/gnmi/client/gnmi @com_github_openconfig_gnmi//client/gnmi
+# gazelle:resolve go github.com/openconfig/gnmi/errlist @com_github_openconfig_gnmi//errlist
+# gazelle:resolve go github.com/openconfig/gnmi/path @com_github_openconfig_gnmi//path
+# gazelle:resolve go github.com/openconfig/gnmi/proto/gnmi @com_github_openconfig_gnmi//proto/gnmi
+# gazelle:resolve go github.com/openconfig/gnmi/proto/gnmi_ext @com_github_openconfig_gnmi//proto/gnmi_ext
+# gazelle:resolve go github.com/openconfig/gnmi/value @com_github_openconfig_gnmi//value
 
+### Help Gazelle resolve external proto files
 # gazelle:resolve go          google.golang.org/genproto/googleapis/rpc/status @org_golang_google_genproto_googleapis_rpc//status
 # gazelle:resolve proto go    google/rpc/status.proto                          @org_golang_google_genproto_googleapis_rpc//status
 # gazelle:resolve proto proto google/rpc/status.proto                          @googleapis//google/rpc:status_proto
@@ -27,38 +39,73 @@ load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier")
 # gazelle:resolve proto proto github.com/openconfig/gnmi/proto/gnmi/gnmi.proto @com_github_openconfig_gnmi//proto/gnmi:gnmi_proto
 # gazelle:resolve proto go    github.com/gogo/protobuf/gogoproto/gogo.proto    @com_github_gogo_protobuf//gogoproto
 
-gazelle(name = "gazelle")
-
-#bazel build :gazelle-update-repos
-gazelle(
-    name = "gazelle-update-repos",
-    args = [
-        "-from_file=go.mod",
-        "-to_macro=deps.bzl%go_dependencies",
-        "-prune",
-    ],
-    command = "update-repos",
-)
+# TODO(bazel-ready): Re-enable gazelle
+# Currently, gazelle completely breaks a lot of the repository:
+#  - It doesn't understand how sonic_go_repos works.
+#  - It tries to upgrde us to the gRPC compiler V2, which doesn't generate the types proto files, and thus breaks the build.
+# gazelle(name = "gazelle")
 
 buildifier(
     name = "buildifier",
+    exclude_patterns = [
+        "./.git/*",
+    ],
+    lint_mode = "warn",
 )
 
 # Use this to generate a text file with a tree diagram of all YANG models
 # used by UMF.
 alias(
     name = "whole-yang-tree-txt",
-    actual = "@sonic-mgmt-common//models/yang:whole-tree",
+    actual = "@sonic-mgmt-common//models/yang:yang-tree",
 )
 
+# Consolidated package containing all gNMI binaries and libraries.
+# Mirrors the install target from the Makefile.
+tar(
+    name = "sonic-gnmi_files",
+    srcs = [
+        "//telemetry",
+        "//dialout/dialout_client_cli",
+        "//gnoi_client",
+        "//gnmi_dump",
+        "//third_party:gnmi_get",
+        "//third_party:gnmi_set",
+        "//third_party:gnmi_cli",
+    ],
+    mtree = [
+        "./usr/sbin/telemetry type=file mode=0755 content=$(location //telemetry)",
+        "./usr/sbin/dialout_client_cli type=file mode=0755 content=$(location //dialout/dialout_client_cli)",
+        "./usr/sbin/gnoi_client type=file mode=0755 content=$(location //gnoi_client)",
+        "./usr/sbin/gnmi_dump type=file mode=0755 content=$(location //gnmi_dump)",
+        "./usr/sbin/gnmi_get type=file mode=0755 content=$(location //third_party:gnmi_get)",
+        "./usr/sbin/gnmi_set type=file mode=0755 content=$(location //third_party:gnmi_set)",
+        "./usr/sbin/gnmi_cli type=file mode=0755 content=$(location //third_party:gnmi_cli)",
+    ],
+)
+
+flatten(
+    name = "sonic-gnmi_pkg",
+    tars = [
+        # Note: It's possible that we need to symlink here,
+        # as the makefile places the pcre libs under ./usr/lib/x86_64,
+        # and the bookworm package is under ./lib/x86_64-linux-gnu or ./usr/lib/x86_64-linux-gnu.
+        "@bookworm//libpcre3:data",
+        ":sonic-gnmi_files",
+    ],
+    deduplicate = True,
+    visibility = ["//visibility:public"],
+)
+
+# TODO(bazel-ready): Re-enable test images or move them to sonic-buildimage.
 # A shortcut to build a Docker image that is used for component testing.
-alias(
-    name = "gnmi_server_test_image",
-    actual = "//gnmi_server:gnmi_server_test_image",
-)
-
-# A shortcut to build a Docker image that is used for debugging UMF.
-alias(
-    name = "gnmi_server_debug_image",
-    actual = "//gnmi_server:gnmi_server_debug_image",
-)
+# alias(
+#     name = "gnmi_server_test_image",
+#     actual = "//gnmi_server:gnmi_server_test_image",
+# )
+#
+# # A shortcut to build a Docker image that is used for debugging UMF.
+# alias(
+#     name = "gnmi_server_debug_image",
+#     actual = "//gnmi_server:gnmi_server_debug_image",
+# )
